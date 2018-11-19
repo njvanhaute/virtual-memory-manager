@@ -2,9 +2,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define PAGESIZE 256
+#define FRAMESIZE 256
+#define NUMFRAMES 256
+#define TLBSIZE 16
+#define PHYSMEMSIZE (NUMFRAMES * FRAMESIZE)
+
 typedef struct log_addr_t {
     uint8_t pg_num, pg_off;    
 } LogAddr;
+
+typedef struct phys_addr_t {
+    uint8_t fr_num, fr_off;
+} PhysAddr;
 
 FILE *open_addr_file(char **argv);
 uint16_t get_logical_addr(uint32_t);
@@ -26,8 +36,6 @@ int main(int argc, char **argv) {
         uint32_t curr = atoi(line);
         uint16_t masked = mask_addr_rep(curr);
         LogAddr *newAddr = create_log_addr(masked);
-        printf("%X\n", masked);
-        printf("%X, %X\n", newAddr->pg_num, newAddr->pg_off); 
     }
     
     fclose(fp);
@@ -52,11 +60,10 @@ uint16_t get_logical_addr(uint32_t i) {
 
 LogAddr *create_log_addr(uint16_t i) {
     LogAddr *la = malloc(sizeof(LogAddr));
-    uint16_t msb16 = i & 0xFFFF0000;
-    msb16 >>= 8;
-    uint16_t lsb16 = i & 0x0000FFFF;
-    la->pg_num = (uint8_t)msb16;
-    la->pg_off = (uint8_t)lsb16;
+    uint16_t msb = i >> 8; 
+    uint16_t lsb = i & 0xFF;
+    la->pg_num = (uint8_t)msb;
+    la->pg_off = (uint8_t)lsb;
     return la;
 }
 
