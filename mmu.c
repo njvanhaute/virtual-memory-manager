@@ -25,8 +25,9 @@ int main(int argc, char **argv) {
     while ((read = getline(&line, &len, fp)) != -1) {
         uint32_t curr = atoi(line);
         uint16_t masked = mask_addr_rep(curr);
-        printf("0x%x\n", curr);
-        printf("0x%x\n", masked);
+        LogAddr *newAddr = create_log_addr(masked);
+        printf("%X\n", masked);
+        printf("%X, %X\n", newAddr->pg_num, newAddr->pg_off); 
     }
     
     fclose(fp);
