@@ -1,6 +1,7 @@
-hostd: mmu.c 
-	gcc -g mmu.c cda.c -o mmu -Wall 	
+hostd: fifo.c lru.c 
+	gcc -g fifo.c -o fifo -Wall
+	gcc -g lru.c -o lru -Wall
 
 .PHONY: clean
 clean:
-	rm -f mmu 
+	rm -f fifo lru 

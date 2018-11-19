@@ -1,4 +1,6 @@
 *.dSYM
 /mmu.dSYM
 mmu
+fifo
+lru
 test.txt
