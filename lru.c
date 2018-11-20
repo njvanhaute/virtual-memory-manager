@@ -6,7 +6,7 @@
 #define PAGESIZE 256
 #define NUMPAGES 256
 #define FRAMESIZE 256
-#define NUMFRAMES 256
+#define NUMFRAMES 128
 #define TLBSIZE 16
 #define BS_PATH "BACKING_STORE.bin"
 
@@ -25,7 +25,8 @@ typedef struct phys_mem_block_t {
 } PhysMem;
 
 typedef struct tlb_unit_t {
-    uint8_t pg_num, fr_num;
+    uint8_t pg_num;
+    PageEntry *page_fr;
 } TLBEntry;
 
 FILE *open_addr_file(char **argv);
@@ -36,8 +37,8 @@ PageEntry *create_page_entry(uint8_t);
 PageEntry **init_page_table(void);
 PhysMem *init_phys_mem(void);
 TLBEntry **init_tlb(void);
-TLBEntry *new_tlb_entry(uint8_t, uint8_t);
-int8_t query_tlb(TLBEntry **, uint8_t);
+TLBEntry *new_tlb_entry(uint8_t, PageEntry *);
+TLBEntry *query_tlb(TLBEntry **, uint8_t);
 
 uint16_t mask_addr_rep(uint32_t);
 
@@ -69,10 +70,10 @@ int main(int argc, char **argv) {
         uint32_t curr = atoi(line);
         uint16_t masked = mask_addr_rep(curr);
         LogAddr *la = create_log_addr(masked);
-        int8_t buffQuery = query_tlb(TLB, la->pg_num);
+        TLBEntry *buffQuery = query_tlb(TLB, la->pg_num);
         uint8_t fr_num = 0;
-        if (buffQuery != -1) {
-            fr_num = (uint8_t)buffQuery;
+        if (buffQuery != 0) {
+            fr_num = buffQuery->page_fr->fr_num;
             tlbHits++;
         } else {
             PageEntry *pe = pageTable[la->pg_num];
@@ -89,7 +90,7 @@ int main(int argc, char **argv) {
  
             fr_num = pe->fr_num;
             TLB[tlbPtr]->pg_num = la->pg_num;
-            TLB[tlbPtr]->fr_num = fr_num;
+            TLB[tlbPtr]->page_fr = pe;
             tlbPtr = (tlbPtr + 1) % TLBSIZE;
         }  
         int physAddr = fr_num * FRAMESIZE + la->pg_off;
@@ -177,27 +178,27 @@ TLBEntry **init_tlb(void) {
     TLBEntry **tlb = malloc(sizeof(TLBEntry *) * TLBSIZE);
     int i;
     for (i = 0; i < TLBSIZE; i++) {
-        tlb[i] = new_tlb_entry(-1, -1); 
+        tlb[i] = new_tlb_entry(-1, 0); 
     }
 
     return tlb;
 }
 
-TLBEntry *new_tlb_entry(uint8_t pg_num, uint8_t fr_num) {
+TLBEntry *new_tlb_entry(uint8_t pg_num, PageEntry *page_fr) {
     TLBEntry *tlbe = malloc(sizeof(TLBEntry));
     tlbe->pg_num = pg_num;
-    tlbe->fr_num = fr_num;
+    tlbe->page_fr = page_fr;
     return tlbe;
 }
 
-int8_t query_tlb(TLBEntry **TLB, uint8_t pg_num) {
+TLBEntry *query_tlb(TLBEntry **TLB, uint8_t pg_num) {
     int i;
     for (i = 0; i < TLBSIZE; i++) {
         TLBEntry *curr = TLB[i];
         if (curr->pg_num == pg_num) {
-            return curr->fr_num;
+            return curr;
         
         }
     }
-    return -1;
+    return 0;
 }
