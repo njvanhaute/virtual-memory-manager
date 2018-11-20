@@ -8,7 +8,6 @@
 #define FRAMESIZE 256
 #define NUMFRAMES 256
 #define TLBSIZE 16
-#define PHYSMEMSIZE (NUMFRAMES * FRAMESIZE)
 #define BS_PATH "BACKING_STORE.bin"
 
 typedef struct log_addr_t {
@@ -17,6 +16,7 @@ typedef struct log_addr_t {
 
 typedef struct page_entry_t {
     uint8_t fr_num;
+    int lastUsed;
     bool valid;
 } PageEntry;
 
@@ -59,6 +59,7 @@ int main(int argc, char **argv) {
     int numTranslated = 0;
     int numPageFaults = 0;
     int tlbHits = 0;
+    int counter = 0;
 
     char *line = NULL;
     size_t len = 0;
@@ -84,9 +85,9 @@ int main(int argc, char **argv) {
                 fr_num = pe->fr_num;
                 framePtr++;
                 numPageFaults++;
-            } else {
-                fr_num = pe->fr_num;
             }
+ 
+            fr_num = pe->fr_num;
             TLB[tlbPtr]->pg_num = la->pg_num;
             TLB[tlbPtr]->fr_num = fr_num;
             tlbPtr = (tlbPtr + 1) % TLBSIZE;
@@ -95,6 +96,7 @@ int main(int argc, char **argv) {
         int value = memBlock->store[fr_num][la->pg_off];                
         printf("Virtual address: %d Physical address: %d Value: %d\n", curr, physAddr, value); 
         numTranslated++;
+        counter++;
     }
 
     printf("Number of Translated Addresses = %d\n", numTranslated);    
@@ -144,6 +146,7 @@ PageEntry *create_page_entry(uint8_t fr_num) {
     PageEntry *pe = malloc(sizeof(PageEntry));
     pe->fr_num = fr_num;
     pe->valid = false;
+    pe->lastUsed = -1;
     return pe;
 }
 

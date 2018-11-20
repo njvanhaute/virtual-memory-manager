@@ -8,7 +8,6 @@
 #define FRAMESIZE 256
 #define NUMFRAMES 256
 #define TLBSIZE 16
-#define PHYSMEMSIZE (NUMFRAMES * FRAMESIZE)
 #define BS_PATH "BACKING_STORE.bin"
 
 typedef struct log_addr_t {
@@ -84,9 +83,9 @@ int main(int argc, char **argv) {
                 fr_num = pe->fr_num;
                 framePtr++;
                 numPageFaults++;
-            } else {
-                fr_num = pe->fr_num;
-            }
+            } 
+            
+            fr_num = pe->fr_num;
             TLB[tlbPtr]->pg_num = la->pg_num;
             TLB[tlbPtr]->fr_num = fr_num;
             tlbPtr = (tlbPtr + 1) % TLBSIZE;
