@@ -16,8 +16,8 @@ typedef struct log_addr_t {
 
 typedef struct page_entry_t {
     uint8_t fr_num;
-    int lastUsed;
     bool valid;
+    unsigned long long last_used;
 } PageEntry;
 
 typedef struct phys_mem_block_t {
@@ -25,11 +25,10 @@ typedef struct phys_mem_block_t {
 } PhysMem;
 
 typedef struct tlb_unit_t {
-    uint8_t pg_num;
-    PageEntry *page_fr;
+    uint8_t pg_num, fr_num;
 } TLBEntry;
 
-FILE *open_addr_file(char **argv);
+FILE *open_addr_file(char **);
 FILE *open_backing_store(void);
 uint16_t get_logical_addr(uint32_t);
 LogAddr *create_log_addr(uint16_t);
@@ -37,11 +36,13 @@ PageEntry *create_page_entry(uint8_t);
 PageEntry **init_page_table(void);
 PhysMem *init_phys_mem(void);
 TLBEntry **init_tlb(void);
-TLBEntry *new_tlb_entry(uint8_t, PageEntry *);
-TLBEntry *query_tlb(TLBEntry **, uint8_t);
-int query_idx_tlb(TLBEntry **, uint8_t);
-int find_lru(PageEntry **);
+TLBEntry *new_tlb_entry(uint8_t, uint8_t);
+int8_t query_tlb(TLBEntry **, uint8_t);
 uint16_t mask_addr_rep(uint32_t);
+bool should_replace(int);
+int find_lru(PageEntry **);
+int find_first_valid(PageEntry **);
+void clear_tlb_entry(TLBEntry **, uint8_t);
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -61,9 +62,8 @@ int main(int argc, char **argv) {
     int numTranslated = 0;
     int numPageFaults = 0;
     int tlbHits = 0;
-    int counter = 0;
+    unsigned long long counter = 0;
 
-    bool replace = false;
     char *line = NULL;
     size_t len = 0;
     ssize_t read;
@@ -72,50 +72,44 @@ int main(int argc, char **argv) {
         uint32_t curr = atoi(line);
         uint16_t masked = mask_addr_rep(curr);
         LogAddr *la = create_log_addr(masked);
-        TLBEntry *buffQuery = query_tlb(TLB, la->pg_num);
+        int8_t buffQuery = query_tlb(TLB, la->pg_num);
         uint8_t fr_num = 0;
-        if (buffQuery != 0) {
-            // TLB Hit
-            fr_num = buffQuery->page_fr->fr_num;
-            buffQuery->page_fr->lastUsed = counter;
+        if (buffQuery != -1) {
+            fr_num = (uint8_t)buffQuery;
             tlbHits++;
+            pageTable[la->pg_num]->last_used = counter;
         } else {
-            // TLB Miss
             PageEntry *pe = pageTable[la->pg_num];
-            if (!pe->valid) { 
-                // Page fault 
+            if (!pe->valid) {  
                 long offset = la->pg_num * PAGESIZE;
                 fseek(bs_fp, offset, SEEK_SET);
-                if (!replace) {
-                    fread(memBlock->store[framePtr], 1, FRAMESIZE, bs_fp);
-                    pe->fr_num = framePtr;
-                } else {
-                    // LRU Replacement
+                
+                int memLoc = 0;
+                if (should_replace(framePtr)) {
+                    // Find least recently used page number
                     int lru_idx = find_lru(pageTable);
-                    PageEntry *lru = pageTable[lru_idx];
-                    lru->valid = false;
-                    fread(memBlock->store[lru->fr_num], 1, FRAMESIZE, bs_fp);
-                    pe->fr_num = lru->fr_num;
-                    int tlb_idx = query_idx_tlb(TLB, lru_idx);
-                    // if removed item in TLB
-                    if (tlb_idx != -1) {
-                        TLB[tlb_idx]->pg_num = -1;
-                        TLB[tlb_idx]->page_fr = 0; 
-                    }
-                }
+                    // Set page invalid
+                    pageTable[lru_idx]->valid = false;
+                    // Read into page frame previously used
+                    memLoc = pageTable[lru_idx]->fr_num;
+                    // If necessary, clear previous entry from TLB
+                    clear_tlb_entry(TLB, lru_idx);
+                } else {
+                    // Read into open page
+                    memLoc = framePtr;
+                } 
+                fread(memBlock->store[memLoc], 1, FRAMESIZE, bs_fp);
+                pe->fr_num = memLoc;
                 pe->valid = true;
                 fr_num = pe->fr_num;
                 framePtr++;
-                if (framePtr >= NUMFRAMES) {
-                    replace = true;
-                }
                 numPageFaults++;
-            }
- 
+            } 
+            pe->last_used = counter;            
+            fr_num = pe->fr_num;
             TLB[tlbPtr]->pg_num = la->pg_num;
-            TLB[tlbPtr]->page_fr = pe;
+            TLB[tlbPtr]->fr_num = fr_num;
             tlbPtr = (tlbPtr + 1) % TLBSIZE;
-            pe->lastUsed = counter;
         }  
         int physAddr = fr_num * FRAMESIZE + la->pg_off;
         int value = memBlock->store[fr_num][la->pg_off];                
@@ -170,8 +164,8 @@ LogAddr *create_log_addr(uint16_t i) {
 PageEntry *create_page_entry(uint8_t fr_num) {
     PageEntry *pe = malloc(sizeof(PageEntry));
     pe->fr_num = fr_num;
+    pe->last_used = 0;
     pe->valid = false;
-    pe->lastUsed = -1;
     return pe;
 }
 
@@ -202,51 +196,65 @@ TLBEntry **init_tlb(void) {
     TLBEntry **tlb = malloc(sizeof(TLBEntry *) * TLBSIZE);
     int i;
     for (i = 0; i < TLBSIZE; i++) {
-        tlb[i] = new_tlb_entry(-1, 0); 
+        tlb[i] = new_tlb_entry(-1, -1); 
     }
 
     return tlb;
 }
 
-TLBEntry *new_tlb_entry(uint8_t pg_num, PageEntry *page_fr) {
+TLBEntry *new_tlb_entry(uint8_t pg_num, uint8_t fr_num) {
     TLBEntry *tlbe = malloc(sizeof(TLBEntry));
     tlbe->pg_num = pg_num;
-    tlbe->page_fr = page_fr;
+    tlbe->fr_num = fr_num;
     return tlbe;
 }
 
-TLBEntry *query_tlb(TLBEntry **TLB, uint8_t pg_num) {
+int8_t query_tlb(TLBEntry **TLB, uint8_t pg_num) {
     int i;
     for (i = 0; i < TLBSIZE; i++) {
         TLBEntry *curr = TLB[i];
         if (curr->pg_num == pg_num) {
-            return curr;
+            return curr->fr_num;
         
         }
     }
-    return 0;
+    return -1;
 }
 
-int query_idx_tlb(TLBEntry **TLB, uint8_t pg_num) {
+bool should_replace(int framePtr) {
+    return framePtr < 0 || framePtr > NUMFRAMES - 1;
+}
+
+int find_lru(PageEntry **pageTable) { 
+    int min_idx = find_first_valid(pageTable);
+    unsigned long long min_last_used = pageTable[min_idx]->last_used;
     int i;
-    for (i = 0; i < TLBSIZE; i++) {
-        TLBEntry *curr = TLB[i];
-        if (curr->pg_num == pg_num) {
+    for (i = 1; i < NUMPAGES; i++) {
+        PageEntry *curr_page = pageTable[i];
+        if (curr_page->last_used < min_last_used && curr_page->valid) {
+            min_last_used = curr_page->last_used;
+            min_idx = i;
+        }
+    }
+    return min_idx;
+}
+
+int find_first_valid(PageEntry **pageTable) {
+    int i;
+    for (i = 0; i < NUMPAGES; i++) {
+        if (pageTable[i]->valid) {
             return i;
         }
     }
     return -1;
 }
 
-int find_lru(PageEntry **pt) {
-    int minLastUsed = pt[0]->lastUsed;
-    int minIdx = 0;
+void clear_tlb_entry(TLBEntry **TLB, uint8_t pg_num) {
     int i;
-    for (i = 1; i < NUMPAGES; i++) {
-        if (pt[i]->lastUsed < minLastUsed && pt[i]->valid) {
-            minLastUsed = pt[i]->lastUsed;
-            minIdx = i;
+    for (i = 0; i < TLBSIZE; i++) {
+        if (TLB[i]->pg_num == pg_num) {
+            TLB[i]->pg_num = -1;
+            TLB[i]->fr_num = -1;
         }
     }
-    return minIdx;
 }
