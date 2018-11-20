@@ -39,7 +39,8 @@ PhysMem *init_phys_mem(void);
 TLBEntry **init_tlb(void);
 TLBEntry *new_tlb_entry(uint8_t, PageEntry *);
 TLBEntry *query_tlb(TLBEntry **, uint8_t);
-
+int query_idx_tlb(TLBEntry **, uint8_t);
+int find_lru(PageEntry **);
 uint16_t mask_addr_rep(uint32_t);
 
 int main(int argc, char **argv) {
@@ -62,6 +63,7 @@ int main(int argc, char **argv) {
     int tlbHits = 0;
     int counter = 0;
 
+    bool replace = false;
     char *line = NULL;
     size_t len = 0;
     ssize_t read;
@@ -73,25 +75,47 @@ int main(int argc, char **argv) {
         TLBEntry *buffQuery = query_tlb(TLB, la->pg_num);
         uint8_t fr_num = 0;
         if (buffQuery != 0) {
+            // TLB Hit
             fr_num = buffQuery->page_fr->fr_num;
+            buffQuery->page_fr->lastUsed = counter;
             tlbHits++;
         } else {
+            // TLB Miss
             PageEntry *pe = pageTable[la->pg_num];
-            if (!pe->valid) {  
+            if (!pe->valid) { 
+                // Page fault 
                 long offset = la->pg_num * PAGESIZE;
                 fseek(bs_fp, offset, SEEK_SET);
-                fread(memBlock->store[framePtr], 1, FRAMESIZE, bs_fp);
-                pe->fr_num = framePtr;
+                if (!replace) {
+                    fread(memBlock->store[framePtr], 1, FRAMESIZE, bs_fp);
+                    pe->fr_num = framePtr;
+                } else {
+                    // LRU Replacement
+                    int lru_idx = find_lru(pageTable);
+                    PageEntry *lru = pageTable[lru_idx];
+                    lru->valid = false;
+                    fread(memBlock->store[lru->fr_num], 1, FRAMESIZE, bs_fp);
+                    pe->fr_num = lru->fr_num;
+                    int tlb_idx = query_idx_tlb(TLB, lru_idx);
+                    // if removed item in TLB
+                    if (tlb_idx != -1) {
+                        TLB[tlb_idx]->pg_num = -1;
+                        TLB[tlb_idx]->page_fr = 0; 
+                    }
+                }
                 pe->valid = true;
                 fr_num = pe->fr_num;
                 framePtr++;
+                if (framePtr >= NUMFRAMES) {
+                    replace = true;
+                }
                 numPageFaults++;
             }
  
-            fr_num = pe->fr_num;
             TLB[tlbPtr]->pg_num = la->pg_num;
             TLB[tlbPtr]->page_fr = pe;
             tlbPtr = (tlbPtr + 1) % TLBSIZE;
+            pe->lastUsed = counter;
         }  
         int physAddr = fr_num * FRAMESIZE + la->pg_off;
         int value = memBlock->store[fr_num][la->pg_off];                
@@ -201,4 +225,28 @@ TLBEntry *query_tlb(TLBEntry **TLB, uint8_t pg_num) {
         }
     }
     return 0;
+}
+
+int query_idx_tlb(TLBEntry **TLB, uint8_t pg_num) {
+    int i;
+    for (i = 0; i < TLBSIZE; i++) {
+        TLBEntry *curr = TLB[i];
+        if (curr->pg_num == pg_num) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int find_lru(PageEntry **pt) {
+    int minLastUsed = pt[0]->lastUsed;
+    int minIdx = 0;
+    int i;
+    for (i = 1; i < NUMPAGES; i++) {
+        if (pt[i]->lastUsed < minLastUsed && pt[i]->valid) {
+            minLastUsed = pt[i]->lastUsed;
+            minIdx = i;
+        }
+    }
+    return minIdx;
 }
