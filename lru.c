@@ -7,7 +7,7 @@
 #define NUMPAGES 256
 #define FRAMESIZE 256
 #define NUMFRAMES 128
-#define TLBSIZE 16
+#define TLBSIZE 32
 #define BS_PATH "BACKING_STORE.bin"
 
 typedef struct log_addr_t {
@@ -30,7 +30,6 @@ typedef struct tlb_unit_t {
 
 FILE *open_addr_file(char **);
 FILE *open_backing_store(void);
-uint16_t get_logical_addr(uint32_t);
 LogAddr *create_log_addr(uint16_t);
 PageEntry *create_page_entry(uint8_t);
 PageEntry **init_page_table(void);
@@ -146,10 +145,6 @@ FILE *open_backing_store(void) {
         exit(1);
     }
     return fp;
-}
-
-uint16_t get_logical_addr(uint32_t i) {
-    return (uint16_t)(i >> 16);
 }
 
 LogAddr *create_log_addr(uint16_t i) {
